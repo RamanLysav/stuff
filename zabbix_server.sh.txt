@@ -1,0 +1,51 @@
+#!/bin/bash
+# This script should be run after installing DB.
+#Run with sudo 
+
+rpm -Uvh https://repo.zabbix.com/zabbix/4.4/rhel/7/x86_64/zabbix-release-4.4-1.el7.noarch.rpm
+yum-config-manager --enable rhel-7-server-optional-rpms
+yum install zabbix-web-mysql zabbix-apache-conf -y 
+sudo systemctl stop mysqld
+## creating mysql db
+mysql -uroot -p8*nR#V0_Xkuk8
+create database zabbix character set utf8 collate utf8_bin;
+create user 'zabbix'@'localhost' identified WITH mysql_native_password by '8*nR#V0_Xkuk8';
+grant all privileges on zabbix.* to 'zabbix'@'localhost';
+quit;
+
+sed -i 's/LogFileSize=0/LogFileSize=5/' /etc/zabbix/zabbix_server.conf
+sed -i "s/DBHost=localhost/DBHost=${DB_HOST}/" /etc/zabbix/zabbix_server.conf
+sed -i 's/DBName=/DBName=zabbix/' /etc/zabbix/zabbix_server.conf
+sed -i 's/DBUser=/DBUser=zabbix/' /etc/zabbix/zabbix_server.conf
+sed -i 's/DBPassword=/DBPassword=8*nR#V0_Xkuk8/' /etc/zabbix/zabbix_server.conf
+
+yum install zabbix-agent -y
+zabbix_ip=$(ifconfig enp0s8 | grep 'inet addr' | awk '{print $2}' | awk -F'
+sed -i "s/Server=127.0.0.1/Server=${zabbix_ip}/" /etc/zabbix/zabbix_agentd.conf
+sed -i "s/ServerActive=127.0.0.1/ServerActive=${zabbix_ip}/" /etc/zabbix/zabbix_agentd.conf
+sed -i "s/Hostname=Zabbix server/Hostname=${zabbix_ip}/" /etc/zabbix/zabbix_agentd.conf
+cat <<EOF >> /etc/zabbix/zabbix_agentd.conf
+SourceIP=${zabbix_ip}
+EnableRemoteCommands=1
+StartAgents=10
+Timeout=30
+AllowRoot=1
+EOF
+
+yum install zabbix-server-mysql -y
+zcat /usr/share/doc/zabbix-server-mysql*/create.sql.gz | mysql -uzabbix -p zabbix
+
+yum install epel-release -y
+yum install zabbix-web-mysql zabbix-nginx-conf -y
+systemctl enable zabbix-server httpd
+systemctl enable zabbix-server.service
+setsebool -P httpd_can_connect_zabbix on
+setsebool -P httpd_can_network_connect_db on
+ausearch -c 'zabbix_server' --raw | audit2allow -M my-zabbixserver
+semodule -i my-zabbixserver.pp
+service httpd restart
+systemctl stop firewalld.service
+
+sudo systemctl start mysqld
+systemctl start zabbix-server
+service zabbix-agent start
